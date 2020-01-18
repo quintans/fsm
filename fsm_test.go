@@ -15,8 +15,9 @@ const (
 var (
 	green  = NewState("GREEN")
 	yellow = NewState("YELLOW")
-	red    = NewState("RED")
-	bounce = NewState("BOUNCE")
+	bounce = NewState("BOUNCE", OnEvent(func(e Event) Event {
+		return Event{Name: BOING}
+	}))
 )
 
 func TestSimpleTransition(t *testing.T) {
@@ -29,31 +30,30 @@ func TestSimpleTransition(t *testing.T) {
 	// [bounce] <-OnEvent- (BOUNCE)
 	// | <-BOUNCE-
 	// [red] <-LOOP->
-
-	green.AddTransition(TICK, yellow)
-	yellow.AddTransition(TICK, bounce)
-	bounce.AddTransition(BOING, red)
-	bounce.OnEvent = func(e *Event) *Event {
-		return NewEvent(BOING, nil)
-	}
-
-	red.AddTransition(TICK, green)
-	red.AddTransition(LOOP, red)
 	var redState struct {
 		ExitCount  int
 		EnterCount int
 		EventCount int
 	}
-	red.OnEnter = func(e *Event) {
-		redState.EnterCount++
-	}
-	red.OnExit = func(e *Event) {
-		redState.ExitCount++
-	}
-	red.OnEvent = func(e *Event) *Event {
-		redState.EventCount++
-		return nil
-	}
+	red := NewState("RED",
+		OnEnter(func(e Event) {
+			redState.EnterCount++
+		}),
+		OnExit(func(e Event) {
+			redState.ExitCount++
+		}),
+		OnEvent(func(e Event) Event {
+			redState.EventCount++
+			return Event{}
+		}),
+	)
+
+	green.AddTransition(TICK, yellow)
+	yellow.AddTransition(TICK, bounce)
+	bounce.AddTransition(BOING, red)
+
+	red.AddTransition(TICK, green)
+	red.AddTransition(LOOP, red)
 
 	// Sate machine
 	sm := NewStateMachine("SimpleTransition")
