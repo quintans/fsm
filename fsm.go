@@ -1,5 +1,6 @@
 package fsm
 
+// StateMachine represents a Finite State Machine (FSM)
 type StateMachine struct {
 	name            string
 	states          map[string]*State
@@ -7,6 +8,7 @@ type StateMachine struct {
 	changeListeners []func(Event)
 }
 
+// NewStateMachine creates a new FSM
 func NewStateMachine(name string) *StateMachine {
 	s := new(StateMachine)
 	s.name = name
@@ -15,7 +17,7 @@ func NewStateMachine(name string) *StateMachine {
 	return s
 }
 
-// SetCurrentState sets the current State. No events will be fired
+// SetCurrentState sets the current State. No event handlers will be called.
 func (s *StateMachine) SetCurrentState(state *State) {
 	s.currentState = state
 }
@@ -26,6 +28,8 @@ func (s *StateMachine) AddState(state *State) {
 	s.states[state.name] = state
 }
 
+// SetState transitions the state machine to the specified state
+// calling the apropriate event handlers
 func (s *StateMachine) SetState(state *State, event Event) Event {
 	var diffState = state != s.currentState
 	if diffState && s.currentState != nil && s.currentState.onExit != nil {
@@ -47,6 +51,8 @@ func (s *StateMachine) SetState(state *State, event Event) Event {
 	return nextEvent
 }
 
+// Event is called to submit an event to the FSM
+// triggering the apropriate state transition, if any is registered for the event.
 func (s *StateMachine) Event(name string, data interface{}) {
 	var state = s.currentState
 	if endState, ok := state.transitions[name]; ok {
@@ -59,10 +65,17 @@ func (s *StateMachine) Event(name string, data interface{}) {
 	}
 }
 
+// State getter for the current state
 func (s *StateMachine) State() *State {
 	return s.currentState
 }
 
+// Name getter for the name
+func (s *StateMachine) Name() string {
+	return s.name
+}
+
+// String returns the string representation
 func (s *StateMachine) String() string {
 	return s.name
 }
@@ -81,24 +94,28 @@ func (s *StateMachine) fireChangeEvent(event Event) {
 	}
 }
 
+// OnEnter option
 func OnEnter(fn func(Event)) func(*State) {
 	return func(s *State) {
 		s.onEnter = fn
 	}
 }
 
+// OnExit option
 func OnExit(fn func(Event)) func(*State) {
 	return func(s *State) {
 		s.onExit = fn
 	}
 }
 
+// OnEvent option
 func OnEvent(fn func(Event) Event) func(*State) {
 	return func(s *State) {
 		s.onEvent = fn
 	}
 }
 
+// State represents a state of the FSM
 type State struct {
 	name        string
 	transitions map[string]*State
@@ -114,6 +131,7 @@ type State struct {
 	onEvent func(Event) Event
 }
 
+// NewState creates a new state
 func NewState(name string, opts ...func(*State)) *State {
 	s := &State{
 		name:        name,
@@ -131,20 +149,24 @@ func (s *State) AddTransition(event string, to *State) *State {
 	return s
 }
 
+// Name getter for the name
 func (s *State) Name() string {
 	return s.name
 }
 
+// String string represenation
 func (s *State) String() string {
 	return s.name
 }
 
+// Event represents the event of the state machine
 type Event struct {
 	Name string
 	Data interface{}
 	From *State
 }
 
+// IsEmpty if this an event
 func (e Event) IsEmpty() bool {
 	return e.Name == ""
 }
