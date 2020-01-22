@@ -17,6 +17,11 @@ func NewStateMachine(name string) *StateMachine {
 	return s
 }
 
+// StateByName gets a registered state with the specified name
+func (s *StateMachine) StateByName(name string) *State {
+	return s.states[name]
+}
+
 // SetCurrentState sets the current State. No event handlers will be called.
 func (s *StateMachine) SetCurrentState(state *State) {
 	s.currentState = state
