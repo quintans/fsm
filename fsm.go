@@ -27,6 +27,12 @@ func (s *StateMachine) SetCurrentState(state *State) {
 	s.currentState = state
 }
 
+// SetCurrentStateByName sets the current State using the name of the state.
+// No event handlers will be called.
+func (s *StateMachine) SetCurrentStateByName(name string) {
+	s.currentState = s.states[name]
+}
+
 // AddState adds state to the StateMachine.
 // If it is the first state to be add, it will be the initial state
 func (s *StateMachine) AddState(state *State) {
