@@ -1,94 +1,83 @@
 package fsm
 
+import (
+	"bytes"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+type ErrStateNotFound struct {
+	state string
+}
+
+func (e *ErrStateNotFound) Error() string {
+	return fmt.Sprintf("unable to find state: %s", e.state)
+}
+
+func (e *ErrStateNotFound) State() string {
+	return e.state
+}
+
+type ErrTransitionNotFound struct {
+	state string
+	key   interface{}
+}
+
+func (e *ErrTransitionNotFound) Error() string {
+	return fmt.Sprintf("unable to find transition on state %s for %+v", e.state, e.key)
+}
+
+func (e *ErrTransitionNotFound) Key() interface{} {
+	return e.key
+}
+
+func (e *ErrTransitionNotFound) State() string {
+	return e.state
+}
+
 // StateMachine represents a Finite State Machine (FSM)
 type StateMachine struct {
 	name            string
 	states          map[string]*State
-	currentState    *State
 	changeListeners []func(*Event)
 }
 
 // NewStateMachine creates a new FSM
 func NewStateMachine(name string) *StateMachine {
-	s := new(StateMachine)
-	s.name = name
-	s.states = map[string]*State{}
-	s.changeListeners = []func(*Event){}
-	return s
+	return &StateMachine{
+		name:            name,
+		states:          map[string]*State{},
+		changeListeners: []func(*Event){},
+	}
 }
 
 // StateByName gets a registered state with the specified name
-func (s *StateMachine) StateByName(name string) *State {
-	return s.states[name]
+func (m *StateMachine) StateByName(name string) *State {
+	return m.states[name]
 }
 
 // SetCurrentState sets the current State. No event handlers will be called.
-func (s *StateMachine) SetCurrentState(state *State) {
-	s.currentState = state
+func (m *StateMachine) SetCurrentState(state *State) *StateMachineInstance {
+	return &StateMachineInstance{
+		StateMachine: m,
+		currentState: state,
+	}
 }
 
 // SetCurrentStateByName sets the current State using the name of the state.
 // No event handlers will be called.
-func (s *StateMachine) SetCurrentStateByName(name string) {
-	s.currentState = s.states[name]
-}
-
-// AddState adds state to the StateMachine.
-// If it is the first state to be add, it will be the initial state
-func (s *StateMachine) AddState(state *State) {
-	s.states[state.name] = state
-}
-
-// SetState transitions the state machine to the specified state
-// calling the apropriate event handlers
-func (s *StateMachine) SetState(state *State, event *Event) *Event {
-	var diffState = state != s.currentState
-	if diffState && s.currentState != nil && s.currentState.onExit != nil {
-		s.currentState.onExit(event)
+func (m *StateMachine) SetCurrentStateByName(name string) (*StateMachineInstance, error) {
+	s, ok := m.states[name]
+	if !ok {
+		return nil, &ErrStateNotFound{state: name}
 	}
-	s.currentState = state
-	var nextEvent *Event
-	if state.onEvent != nil {
-		nextEvent = s.currentState.onEvent(event)
-	}
-	if diffState && s.currentState.onEnter != nil {
-		s.currentState.onEnter(event)
-	}
-
-	if event != nil {
-		s.fireChangeEvent(event)
-	}
-
-	return nextEvent
-}
-
-// Event is called to submit an event to the FSM
-// triggering the apropriate state transition, if any is registered for the event.
-func (s *StateMachine) Event(key interface{}, data ...interface{}) {
-	var state = s.currentState
-	endState := state.transitions[key]
-	if endState == nil {
-		// get the default transition
-		endState = state.transitions[nil]
-	}
-	if endState != nil {
-		var event = &Event{key, data, state}
-		var nextEvent = s.SetState(endState, event)
-		s.fireChangeEvent(event)
-		if nextEvent != nil {
-			s.Event(nextEvent.Key(), nextEvent.Data()...)
-		}
-	}
-}
-
-// State getter for the current state
-func (s *StateMachine) State() *State {
-	return s.currentState
+	return m.SetCurrentState(s), nil
 }
 
 // Name getter for the name
-func (s *StateMachine) Name() string {
-	return s.name
+func (m *StateMachine) Name() string {
+	return m.name
 }
 
 // String returns the string representation
@@ -99,15 +88,147 @@ func (s *StateMachine) String() string {
 // AddChangeListener add a change listener.
 // Is only used to report changes that have already happened. ChangeEvents are
 // only fired AFTER a transition's doAfterTransition is called.
-func (s *StateMachine) AddChangeListener(listener func(*Event)) {
-	s.changeListeners = append(s.changeListeners, listener)
+func (m *StateMachine) AddChangeListener(listener func(*Event)) {
+	m.changeListeners = append(m.changeListeners, listener)
 }
 
 // Fire a change event to registered listeners.
-func (s *StateMachine) fireChangeEvent(event *Event) {
-	for _, v := range s.changeListeners {
+func (m *StateMachine) fireChangeEvent(event *Event) {
+	for _, v := range m.changeListeners {
 		v(event)
 	}
+}
+
+// NewState creates ans adds state to the StateMachine.
+func (m *StateMachine) NewState(name string, opts ...func(*State)) *State {
+	s := &State{
+		name:        name,
+		transitions: map[interface{}]*State{},
+	}
+	for _, o := range opts {
+		o(s)
+	}
+	m.states[s.name] = s
+	return s
+}
+
+func (m *StateMachine) Dot() string {
+	var buf bytes.Buffer
+	buf.WriteString("digraph finite_state_machine {\n\trankdir=LR;")
+
+	edges := m.edges()
+	if len(edges) != 0 {
+		buf.WriteString("\n\tnode [shape = doublecircle]; ")
+		buf.WriteString(strings.Join(edges, ", "))
+		buf.WriteString(";")
+	}
+	buf.WriteString("\n\tnode [shape = circle];")
+	buf.WriteString("\n")
+	var transitions []string
+	for _, s := range m.states {
+		for k, v := range s.transitions {
+			if k == nil {
+				k = "fallback"
+			}
+			transitions = append(transitions, fmt.Sprintf("\t%s -> %s [label = \"%+v\"];", s.name, v.name, k))
+		}
+	}
+	sort.Strings(transitions)
+	for _, t := range transitions {
+		buf.WriteString(t)
+		buf.WriteString("\n")
+	}
+	buf.WriteString(fmt.Sprintf("\tlabelloc=\"t\";\n\tlabel=\"%s\";\n", m.name))
+	buf.WriteString("}")
+	return buf.String()
+}
+
+// edges returns a list of nodes that don't outgoing or ingoing transitions
+func (m *StateMachine) edges() []string {
+	var statesNames []string
+	for _, state := range m.states {
+		if isEnd(state) || m.isStart(state) {
+			statesNames = append(statesNames, state.name)
+		}
+	}
+	sort.Strings(statesNames)
+	return statesNames
+}
+
+func isEnd(state *State) bool {
+	return len(state.transitions) == 0
+}
+
+func (m *StateMachine) isStart(state *State) bool {
+	for _, s := range m.states {
+		// ignore self
+		if s.name == state.name {
+			continue
+		}
+
+		for _, t := range s.transitions {
+			if t.name == state.name {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+type StateMachineInstance struct {
+	*StateMachine
+	currentState *State
+}
+
+// setState transitions the state machine to the specified state
+// calling the appropriate event handlers
+func (m *StateMachineInstance) setState(state *State, event *Event) *Event {
+	diffState := state != m.currentState
+	exitHandler := m.currentState.onExit
+	if diffState && m.currentState != nil && exitHandler != nil {
+		exitHandler(event)
+	}
+
+	var nextEvent *Event
+	if state.onEvent != nil {
+		nextEvent = state.onEvent(event)
+	}
+	if diffState && state.onEnter != nil {
+		state.onEnter(event)
+	}
+
+	if event != nil {
+		m.fireChangeEvent(event)
+	}
+	m.currentState = state
+	return nextEvent
+}
+
+// Event is called to submit an event to the FSM
+// triggering the appropriate state transition, if any is registered for the event.
+func (m *StateMachineInstance) Event(key interface{}, data interface{}) (endState *State, state *State, err error) {
+	state = m.currentState
+	endState = state.transitions[key]
+	if endState == nil {
+		// get the fallback transition
+		endState = state.transitions[nil]
+	}
+	if endState == nil {
+		return nil, nil, &ErrTransitionNotFound{state: state.name, key: key}
+	}
+	event := &Event{key, data, state}
+	nextEvent := m.setState(endState, event)
+	m.fireChangeEvent(event)
+	if nextEvent != nil {
+		endState, state, err = m.Event(nextEvent.Key(), nextEvent.Data())
+	}
+
+	return endState, state, err
+}
+
+// State getter for the current state
+func (m *StateMachineInstance) State() *State {
+	return m.currentState
 }
 
 // OnEnter option
@@ -141,26 +262,14 @@ type State struct {
 	// onExit is called when exiting a state
 	// when there is a transition A -> B where A != B
 	onExit func(*Event)
-	// onEvent is called when a event occurrs, even if
+	// onEvent is called when a event occurs, even if
 	// the transition A -> B where A == B.
 	// An event can be returned in the case of a transitional state.
 	onEvent func(*Event) *Event
 }
 
-// NewState creates a new state
-func NewState(name string, opts ...func(*State)) *State {
-	s := &State{
-		name:        name,
-		transitions: map[interface{}]*State{},
-	}
-	for _, o := range opts {
-		o(s)
-	}
-	return s
-}
-
 // AddTransition adds a state transition.
-// Setting the eventKey as nil, will make the transition as the default one.
+// Setting the eventKey as nil, will make the transition as the fallback one.
 func (s *State) AddTransition(eventKey interface{}, to *State) *State {
 	s.transitions[eventKey] = to
 	return s
@@ -171,7 +280,7 @@ func (s *State) Name() string {
 	return s.name
 }
 
-// String string represenation
+// String string representation
 func (s *State) String() string {
 	return s.name
 }
@@ -179,13 +288,18 @@ func (s *State) String() string {
 // Event represents the event of the state machine
 type Event struct {
 	key  interface{}
-	data []interface{}
+	data interface{}
 	from *State
 }
 
 // NewEvent creates a new event
-func NewEvent(key interface{}, data ...interface{}) *Event {
-	return &Event{key: key, data: data}
+func NewEvent(key interface{}) *Event {
+	return &Event{key: key}
+}
+
+func (e *Event) WithData(data interface{}) *Event {
+	e.data = data
+	return e
 }
 
 // Key gets the key
@@ -194,7 +308,7 @@ func (e *Event) Key() interface{} {
 }
 
 // Data gets the data
-func (e *Event) Data() []interface{} {
+func (e *Event) Data() interface{} {
 	return e.data
 }
 
