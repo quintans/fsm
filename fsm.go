@@ -1,6 +1,7 @@
 package fsm
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -37,7 +38,7 @@ func (e *ErrTransitionNotFound) State() string {
 type StateMachine struct {
 	name            string
 	states          map[string]*State
-	changeListeners []func(*Event)
+	changeListeners []OnHandler
 }
 
 // NewStateMachine creates a new FSM
@@ -45,36 +46,36 @@ func NewStateMachine(name string) *StateMachine {
 	return &StateMachine{
 		name:            name,
 		states:          map[string]*State{},
-		changeListeners: []func(*Event){},
+		changeListeners: []OnHandler{},
 	}
 }
 
 // StateByName gets a registered state with the specified name
-func (m *StateMachine) StateByName(name string) *State {
-	return m.states[name]
+func (s *StateMachine) StateByName(name string) *State {
+	return s.states[name]
 }
 
-// SetCurrentState sets the current State. No event handlers will be called.
-func (m *StateMachine) SetCurrentState(state *State) *StateMachineInstance {
+// FromState sets the current State. No event handlers will be called.
+func (s *StateMachine) FromState(state *State) *StateMachineInstance {
 	return &StateMachineInstance{
-		StateMachine: m,
+		StateMachine: s,
 		currentState: state,
 	}
 }
 
-// SetCurrentStateByName sets the current State using the name of the state.
+// FromStateName sets the current State using the name of the state.
 // No event handlers will be called.
-func (m *StateMachine) SetCurrentStateByName(name string) (*StateMachineInstance, error) {
-	s, ok := m.states[name]
+func (s *StateMachine) FromStateName(name string) (*StateMachineInstance, error) {
+	state, ok := s.states[name]
 	if !ok {
 		return nil, &ErrStateNotFound{state: name}
 	}
-	return m.SetCurrentState(s), nil
+	return s.FromState(state), nil
 }
 
 // Name getter for the name
-func (m *StateMachine) Name() string {
-	return m.name
+func (s *StateMachine) Name() string {
+	return s.name
 }
 
 // String returns the string representation
@@ -84,29 +85,90 @@ func (s *StateMachine) String() string {
 
 // AddChangeListener add a change listener.
 // Is only used to report changes that have already happened. ChangeEvents are
-// only fired AFTER a transition's doAfterTransition is called.
-func (m *StateMachine) AddChangeListener(listener func(*Event)) {
-	m.changeListeners = append(m.changeListeners, listener)
+// only fired AFTER a transition has happened.
+func (s *StateMachine) AddChangeListener(listener OnHandler) {
+	s.changeListeners = append(s.changeListeners, listener)
 }
 
 // Fire a change event to registered listeners.
-func (m *StateMachine) fireChangeEvent(event *Event) {
-	for _, v := range m.changeListeners {
-		v(event)
+func (s *StateMachine) fireChangeEvent(ctx *Context) {
+	for _, v := range s.changeListeners {
+		v(ctx)
 	}
 }
 
-// NewState creates ans adds state to the StateMachine.
-func (m *StateMachine) NewState(name string, opts ...func(*State)) *State {
-	s := &State{
+// AddState creates ans adds state to the StateMachine.
+func (s *StateMachine) AddState(name string, opts ...func(*State)) *State {
+	state := &State{
 		name:        name,
 		transitions: map[interface{}]*State{},
 	}
 	for _, o := range opts {
-		o(s)
+		o(state)
 	}
-	m.states[s.name] = s
-	return s
+	s.states[state.name] = state
+	return state
+}
+
+// Fire is called to submit an event to the FSM
+// triggering the appropriate state transition, if any is registered for the event.
+func (s *StateMachine) Fire(currentState *State, key interface{}, options ...EventOption) (*State, error) {
+	ctx := &Context{eventKey: key}
+	for _, option := range options {
+		option(ctx)
+	}
+
+	next, err := s.fire(currentState, ctx)
+	if err != nil {
+		return nil, err
+	}
+	return next, nil
+}
+
+func (s *StateMachine) fire(currentState *State, ctx *Context) (*State, error) {
+	key := ctx.eventKey
+	state := currentState
+	nextState := state.transitions[key]
+	if nextState == nil {
+		// get the fallback transition
+		nextState = state.transitions[nil]
+	}
+	if nextState == nil {
+		return nil, &ErrTransitionNotFound{state: state.name, key: key}
+	}
+
+	nextCtx := s.transition(state, nextState, ctx)
+	if nextCtx != nil {
+		return s.fire(nextState, nextCtx)
+	}
+
+	return nextState, nil
+}
+
+// transition transitions the state machine to the specified state
+// calling the appropriate event handlers
+func (s *StateMachine) transition(currentState, nextState *State, ctx *Context) *Context {
+	ctx = ctx.SetFrom(currentState).SetTo(nextState)
+
+	diffState := nextState != currentState
+	exitHandler := currentState.onExit
+	if diffState && currentState != nil && exitHandler != nil {
+		exitHandler(ctx)
+	}
+
+	if diffState && nextState.onEnter != nil {
+		nextState.onEnter(ctx)
+	}
+
+	var nextCtx *Context
+	if nextState.onEvent != nil {
+		nextState.onEvent(ctx)
+		nextCtx = ctx.nextContext()
+	}
+
+	s.fireChangeEvent(ctx)
+
+	return nextCtx
 }
 
 type StateMachineInstance struct {
@@ -114,68 +176,22 @@ type StateMachineInstance struct {
 	currentState *State
 }
 
-// setState transitions the state machine to the specified state
-// calling the appropriate event handlers
-func (m *StateMachineInstance) setState(nextState *State, event *Event) *Event {
-	diffState := nextState != m.currentState
-	exitHandler := m.currentState.onExit
-	if diffState && m.currentState != nil && exitHandler != nil {
-		exitHandler(event)
-	}
-
-	if diffState && nextState.onEnter != nil {
-		nextState.onEnter(event)
-	}
-
-	var nextEvent *Event
-	if nextState.onEvent != nil {
-		nextEvent = nextState.onEvent(event)
-	}
-
-	if event != nil {
-		m.fireChangeEvent(event)
-	}
-	m.currentState = nextState
-	return nextEvent
-}
-
-type EventOption func(*Event)
+type EventOption func(*Context)
 
 func WithData(data interface{}) EventOption {
-	return func(e *Event) {
-		e.data = data
+	return func(ctx *Context) {
+		ctx.data = data
 	}
 }
 
 // Fire is called to submit an event to the FSM
 // triggering the appropriate state transition, if any is registered for the event.
 func (m *StateMachineInstance) Fire(key interface{}, options ...EventOption) error {
-	event := &Event{key: key, from: m.currentState}
-	for _, option := range options {
-		option(event)
+	cur, err := m.StateMachine.Fire(m.currentState, key, options...)
+	if err != nil {
+		return err
 	}
-
-	return m.fire(event)
-}
-
-func (m *StateMachineInstance) fire(event *Event) error {
-	key := event.key
-	state := m.currentState
-	endState := state.transitions[key]
-	if endState == nil {
-		// get the fallback transition
-		endState = state.transitions[nil]
-	}
-	if endState == nil {
-		return &ErrTransitionNotFound{state: state.name, key: key}
-	}
-
-	nextEvent := m.setState(endState, event)
-	m.fireChangeEvent(event)
-	if nextEvent != nil {
-		return m.fire(nextEvent)
-	}
-
+	m.currentState = cur
 	return nil
 }
 
@@ -184,7 +200,7 @@ func (m *StateMachineInstance) State() *State {
 	return m.currentState
 }
 
-type OnHandler func(*Event)
+type OnHandler func(*Context)
 
 // OnEnter option
 func OnEnter(fn OnHandler) func(*State) {
@@ -201,7 +217,7 @@ func OnExit(fn OnHandler) func(*State) {
 }
 
 // OnEvent option
-func OnEvent(fn func(*Event) *Event) func(*State) {
+func OnEvent(fn OnHandler) func(*State) {
 	return func(s *State) {
 		s.onEvent = fn
 	}
@@ -219,16 +235,22 @@ type State struct {
 	// the transition A -> B where A == B.
 	// An event can be returned in the case of a transitional state.
 	// This handler is called after the OnEnter
-	onEvent func(*Event) *Event
+	onEvent OnHandler
 	// onExit is called when exiting a state
 	// when there is a transition A -> B where A != B
 	onExit OnHandler
 }
 
 // AddTransition adds a state transition.
-// Setting the eventKey as nil, will make the transition as the fallback one.
 func (s *State) AddTransition(eventKey interface{}, to *State) *State {
 	s.transitions[eventKey] = to
+	return s
+}
+
+// AddTransition adds a fallback state transition.
+// If no transition is identified this one will be used
+func (s *State) AddFallbackTransition(to *State) *State {
+	s.transitions[nil] = to
 	return s
 }
 
@@ -242,34 +264,80 @@ func (s *State) String() string {
 	return s.name
 }
 
-// Event represents the event of the state machine
-type Event struct {
-	key  interface{}
-	data interface{}
-	from *State
+// Context represents the event of the state machine
+type Context struct {
+	context  context.Context
+	eventKey interface{}
+	data     interface{}
+	to       *State
+	from     *State
+	fire     *fireEvent
 }
 
-// NewEvent creates a new event
-func NewEvent(key interface{}) *Event {
-	return &Event{key: key}
+type fireEvent struct {
+	key     interface{}
+	options []EventOption
 }
 
-func (e *Event) WithData(data interface{}) *Event {
-	e.data = data
-	return e
+// Fire sets a new event to be fired after exiting OnEvent handler.
+// This will copy existing options to the new event allowing to override them
+func (c *Context) Fire(key interface{}, overrideOptions ...EventOption) {
+	var options []EventOption
+	if c.data != nil {
+		options = append(options, WithData(c.data))
+	}
+	if c.context != nil {
+		options = append(options, WithData(c.context))
+	}
+	options = append(options, overrideOptions...)
+	c.fire = &fireEvent{key: key, options: options}
+}
+
+func (c *Context) nextContext() *Context {
+	if c.fire == nil {
+		return nil
+	}
+	ctx := &Context{eventKey: c.fire.key}
+	for _, option := range c.fire.options {
+		option(ctx)
+	}
+	return ctx
+}
+
+func (c *Context) SetFrom(state *State) *Context {
+	cp := *c
+	cp.from = state
+	return &cp
+}
+
+func (c *Context) SetTo(state *State) *Context {
+	cp := *c
+	cp.to = state
+	return &cp
 }
 
 // Key gets the key
-func (e *Event) Key() interface{} {
-	return e.key
+func (c *Context) Key() interface{} {
+	return c.eventKey
 }
 
 // Data gets the data
-func (e *Event) Data() interface{} {
-	return e.data
+func (c *Context) Data() interface{} {
+	return c.data
 }
 
 // FromState gets the state before the transition caused by this event
-func (e *Event) FromState() *State {
-	return e.from
+func (c *Context) FromState() *State {
+	return c.from
+}
+
+func (c *Context) ToState() *State {
+	return c.to
+}
+
+func (c *Context) Context() context.Context {
+	if c.context == nil {
+		return context.Background()
+	}
+	return c.context
 }

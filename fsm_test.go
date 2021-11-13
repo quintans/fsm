@@ -84,40 +84,38 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker) {
 	sm := fsm.NewStateMachine("SimpleTransition")
 	tracker := &Tracker{}
 	// states
-	green := sm.NewState(stateGreen,
-		fsm.OnEnter(func(e *fsm.Event) {
+	green := sm.AddState(stateGreen,
+		fsm.OnEnter(func(c *fsm.Context) {
 			tracker.Add(stateGreen, Enter)
 		}),
-		fsm.OnExit(func(e *fsm.Event) {
+		fsm.OnExit(func(c *fsm.Context) {
 			tracker.Add(stateGreen, Exit)
 		}),
-		fsm.OnEvent(func(e *fsm.Event) *fsm.Event {
+		fsm.OnEvent(func(c *fsm.Context) {
 			tracker.Add(stateGreen, Event)
-			return nil
 		}),
 	)
-	yellow := sm.NewState(stateYellow,
-		fsm.OnEnter(func(e *fsm.Event) {
+	yellow := sm.AddState(stateYellow,
+		fsm.OnEnter(func(c *fsm.Context) {
 			tracker.Add(stateYellow, Enter)
 		}),
-		fsm.OnExit(func(e *fsm.Event) {
+		fsm.OnExit(func(c *fsm.Context) {
 			tracker.Add(stateYellow, Exit)
 		}),
-		fsm.OnEvent(func(e *fsm.Event) *fsm.Event {
+		fsm.OnEvent(func(c *fsm.Context) {
 			tracker.Add(stateYellow, Event)
-			return nil
 		}),
 	)
-	bounce := sm.NewState(stateBounce,
-		fsm.OnEnter(func(e *fsm.Event) {
+	bounce := sm.AddState(stateBounce,
+		fsm.OnEnter(func(c *fsm.Context) {
 			tracker.Add(stateBounce, Enter)
 		}),
-		fsm.OnExit(func(e *fsm.Event) {
+		fsm.OnExit(func(c *fsm.Context) {
 			tracker.Add(stateBounce, Exit)
 		}),
-		fsm.OnEvent(func(e *fsm.Event) *fsm.Event {
+		fsm.OnEvent(func(c *fsm.Context) {
 			tracker.Add(stateBounce, Event)
-			return fsm.NewEvent(CONTINUE)
+			c.Fire(CONTINUE)
 		}),
 	)
 	// TRANSITIONS
@@ -130,40 +128,38 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker) {
 	// | <-CONTINUE-
 	// [red] <-LOOP->
 
-	red := sm.NewState(stateRed,
-		fsm.OnEnter(func(e *fsm.Event) {
+	red := sm.AddState(stateRed,
+		fsm.OnEnter(func(c *fsm.Context) {
 			tracker.Add(stateRed, Enter)
 		}),
-		fsm.OnExit(func(e *fsm.Event) {
+		fsm.OnExit(func(c *fsm.Context) {
 			tracker.Add(stateRed, Exit)
 		}),
-		fsm.OnEvent(func(e *fsm.Event) *fsm.Event {
+		fsm.OnEvent(func(c *fsm.Context) {
 			tracker.Add(stateRed, Event)
-			return nil
 		}),
 	)
-	exit := sm.NewState(stateExit,
-		fsm.OnEnter(func(e *fsm.Event) {
+	exit := sm.AddState(stateExit,
+		fsm.OnEnter(func(c *fsm.Context) {
 			tracker.Add(stateExit, Enter)
 		}),
-		fsm.OnExit(func(e *fsm.Event) {
+		fsm.OnExit(func(c *fsm.Context) {
 			tracker.Add(stateExit, Exit)
 		}),
-		fsm.OnEvent(func(e *fsm.Event) *fsm.Event {
+		fsm.OnEvent(func(c *fsm.Context) {
 			tracker.Add(stateExit, Event)
-			return nil
 		}),
 	)
 
 	green.AddTransition(TICK, yellow)
 	yellow.AddTransition(TICK, bounce)
-	yellow.AddTransition(nil, exit) // fallback
+	yellow.AddFallbackTransition(exit)
 	bounce.AddTransition(CONTINUE, red)
 
 	red.AddTransition(TICK, green)
 	red.AddTransition(LOOP, red)
 
-	m := sm.SetCurrentState(green)
+	m := sm.FromState(green)
 
 	return m, &States{
 		green:  green,
@@ -220,7 +216,7 @@ func TestDefaultTransition(t *testing.T) {
 	require.Equal(t, stateExit, sm.State().Name())
 }
 
-func Example() {
+func ExampleDot() {
 	smi, _, _ := createFSM()
 	fmt.Println(smi.StateMachine.Dot())
 	// Output:
@@ -237,4 +233,17 @@ func Example() {
 	// 	labelloc="t";
 	// 	label="SimpleTransition";
 	// }
+}
+
+func ExampleListener() {
+	smi, _, _ := createFSM()
+	smi.AddChangeListener(func(c *fsm.Context) {
+		fmt.Printf("%s --%s--> %s\n", c.FromState(), c.Key(), c.ToState())
+	})
+	smi.Fire(TICK)
+	smi.Fire(TICK)
+	// Output:
+	// GREEN --TICK--> YELLOW
+	// YELLOW --TICK--> BOUNCE
+	// BOUNCE --CONTINUE--> RED
 }
