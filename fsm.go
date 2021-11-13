@@ -213,36 +213,36 @@ func WithData(data interface{}) EventOption {
 	}
 }
 
-// Event is called to submit an event to the FSM
+// Fire is called to submit an event to the FSM
 // triggering the appropriate state transition, if any is registered for the event.
-func (m *StateMachineInstance) Event(key interface{}, options ...EventOption) (endState *State, state *State, err error) {
+func (m *StateMachineInstance) Fire(key interface{}, options ...EventOption) error {
 	event := &Event{key: key, from: m.currentState}
 	for _, option := range options {
 		option(event)
 	}
 
-	return m.event(event)
+	return m.fire(event)
 }
 
-func (m *StateMachineInstance) event(event *Event) (endState *State, state *State, err error) {
+func (m *StateMachineInstance) fire(event *Event) error {
 	key := event.key
-	state = m.currentState
-	endState = state.transitions[key]
+	state := m.currentState
+	endState := state.transitions[key]
 	if endState == nil {
 		// get the fallback transition
 		endState = state.transitions[nil]
 	}
 	if endState == nil {
-		return nil, nil, &ErrTransitionNotFound{state: state.name, key: key}
+		return &ErrTransitionNotFound{state: state.name, key: key}
 	}
 
 	nextEvent := m.setState(endState, event)
 	m.fireChangeEvent(event)
 	if nextEvent != nil {
-		return m.event(nextEvent)
+		return m.fire(nextEvent)
 	}
 
-	return endState, state, err
+	return nil
 }
 
 // State getter for the current state

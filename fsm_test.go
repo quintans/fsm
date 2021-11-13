@@ -176,7 +176,7 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker) {
 
 func TestOnHandlersOrder(t *testing.T) {
 	smi, _, tracker := createFSM()
-	smi.Event(TICK)
+	smi.Fire(TICK)
 
 	require.Equal(t,
 		[]EventInfo{
@@ -191,20 +191,20 @@ func TestOnHandlersOrder(t *testing.T) {
 func TestSimpleTransition(t *testing.T) {
 	smi, states, tracker := createFSM()
 
-	smi.Event(TICK)
+	smi.Fire(TICK)
 	require.Equal(t, stateYellow, smi.State().Name())
 
-	smi.Event(TICK)
+	smi.Fire(TICK)
 	require.Equal(t, stateRed, smi.State().Name())
 
-	smi.Event(LOOP)
-	smi.Event(LOOP)
+	smi.Fire(LOOP)
+	smi.Fire(LOOP)
 	require.Equal(t, stateRed, smi.State().Name())
 	require.Equal(t, 1, tracker.OnEnters(states.red))
 	require.Equal(t, 3, tracker.OnEvents(states.red))
 	require.Equal(t, 0, tracker.OnExits(states.red))
 
-	smi.Event(TICK)
+	smi.Fire(TICK)
 	require.Equal(t, stateGreen, smi.State().Name())
 
 	require.Equal(t, 1, tracker.OnExits(states.red))
@@ -213,10 +213,10 @@ func TestSimpleTransition(t *testing.T) {
 func TestDefaultTransition(t *testing.T) {
 	sm, _, _ := createFSM()
 
-	sm.Event(TICK)
+	sm.Fire(TICK)
 	require.Equal(t, stateYellow, sm.State().Name())
 
-	sm.Event("UNKNOWN")
+	sm.Fire("UNKNOWN")
 	require.Equal(t, stateExit, sm.State().Name())
 }
 
