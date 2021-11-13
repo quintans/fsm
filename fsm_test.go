@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/quintans/fsm"
+	"github.com/stretchr/testify/require"
 )
 
 // event
@@ -28,45 +29,131 @@ type States struct {
 	exit   *fsm.State
 }
 
-type Counters struct {
-	RedExitCount  int
-	RedEnterCount int
-	RedEventCount int
+type EventType int
+
+const (
+	Enter EventType = iota + 1
+	Event
+	Exit
+)
+
+type EventInfo struct {
+	stateName string
+	eventType EventType
 }
 
-func createFSM() (*fsm.StateMachineInstance, *States, *Counters) {
+type Tracker struct {
+	events []EventInfo
+}
+
+func (c *Tracker) Add(stateName string, eventType EventType) {
+	c.events = append(c.events, EventInfo{
+		stateName: stateName,
+		eventType: eventType,
+	})
+}
+
+func (c *Tracker) OnExits(state *fsm.State) int {
+	return c.count(state, Exit)
+}
+
+func (c *Tracker) OnEnters(state *fsm.State) int {
+	return c.count(state, Enter)
+}
+
+func (c *Tracker) OnEvents(state *fsm.State) int {
+	return c.count(state, Event)
+}
+
+func (c *Tracker) count(state *fsm.State, eventType EventType) int {
+	cnt := 0
+	for _, v := range c.events {
+		if v.eventType == eventType && v.stateName == state.Name() {
+			cnt++
+		}
+	}
+	return cnt
+}
+
+func (c *Tracker) Events() []EventInfo {
+	return c.events
+}
+
+func createFSM() (*fsm.StateMachineInstance, *States, *Tracker) {
 	// Sate machine
 	sm := fsm.NewStateMachine("SimpleTransition")
+	tracker := &Tracker{}
 	// states
-	green := sm.NewState(stateGreen)
-	yellow := sm.NewState(stateYellow)
-	bounce := sm.NewState(stateBounce, fsm.OnEvent(func(e *fsm.Event) *fsm.Event {
-		return fsm.NewEvent(CONTINUE)
-	}))
+	green := sm.NewState(stateGreen,
+		fsm.OnEnter(func(e *fsm.Event) {
+			tracker.Add(stateGreen, Enter)
+		}),
+		fsm.OnExit(func(e *fsm.Event) {
+			tracker.Add(stateGreen, Exit)
+		}),
+		fsm.OnEvent(func(e *fsm.Event) *fsm.Event {
+			tracker.Add(stateGreen, Event)
+			return nil
+		}),
+	)
+	yellow := sm.NewState(stateYellow,
+		fsm.OnEnter(func(e *fsm.Event) {
+			tracker.Add(stateYellow, Enter)
+		}),
+		fsm.OnExit(func(e *fsm.Event) {
+			tracker.Add(stateYellow, Exit)
+		}),
+		fsm.OnEvent(func(e *fsm.Event) *fsm.Event {
+			tracker.Add(stateYellow, Event)
+			return nil
+		}),
+	)
+	bounce := sm.NewState(stateBounce,
+		fsm.OnEnter(func(e *fsm.Event) {
+			tracker.Add(stateBounce, Enter)
+		}),
+		fsm.OnExit(func(e *fsm.Event) {
+			tracker.Add(stateBounce, Exit)
+		}),
+		fsm.OnEvent(func(e *fsm.Event) *fsm.Event {
+			tracker.Add(stateBounce, Event)
+			return fsm.NewEvent(CONTINUE)
+		}),
+	)
 	// TRANSITIONS
 	// -----------
 	// [green]
 	// | <-TICK-
-	// [yellow] --> [exit]
+	// [yellow] --> [exit] (fallback)
 	// | <-TICK-
 	// [bounce] <-OnEvent- (CONTINUE)
 	// | <-CONTINUE-
 	// [red] <-LOOP->
 
-	counters := &Counters{}
 	red := sm.NewState(stateRed,
 		fsm.OnEnter(func(e *fsm.Event) {
-			counters.RedEnterCount++
+			tracker.Add(stateRed, Enter)
 		}),
 		fsm.OnExit(func(e *fsm.Event) {
-			counters.RedExitCount++
+			tracker.Add(stateRed, Exit)
 		}),
 		fsm.OnEvent(func(e *fsm.Event) *fsm.Event {
-			counters.RedEventCount++
+			tracker.Add(stateRed, Event)
 			return nil
 		}),
 	)
-	exit := sm.NewState(stateExit)
+	exit := sm.NewState(stateExit,
+		fsm.OnEnter(func(e *fsm.Event) {
+			tracker.Add(stateExit, Enter)
+		}),
+		fsm.OnExit(func(e *fsm.Event) {
+			tracker.Add(stateExit, Exit)
+		}),
+		fsm.OnEvent(func(e *fsm.Event) *fsm.Event {
+			tracker.Add(stateExit, Event)
+			return nil
+		}),
+	)
 
 	green.AddTransition(TICK, yellow)
 	yellow.AddTransition(TICK, bounce)
@@ -84,59 +171,53 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Counters) {
 		red:    red,
 		bounce: bounce,
 		exit:   exit,
-	}, counters
+	}, tracker
+}
+
+func TestOnHandlersOrder(t *testing.T) {
+	smi, _, tracker := createFSM()
+	smi.Event(TICK)
+
+	require.Equal(t,
+		[]EventInfo{
+			{stateName: stateGreen, eventType: Exit},
+			{stateName: stateYellow, eventType: Enter},
+			{stateName: stateYellow, eventType: Event},
+		},
+		tracker.Events(),
+	)
 }
 
 func TestSimpleTransition(t *testing.T) {
-	smi, states, counters := createFSM()
+	smi, states, tracker := createFSM()
 
-	smi.Event(TICK, nil)
-	if smi.State() != states.yellow {
-		t.Error("Expected state YELLOW got,", smi.State())
-	}
+	smi.Event(TICK)
+	require.Equal(t, stateYellow, smi.State().Name())
 
-	smi.Event(TICK, nil)
-	if smi.State() != states.red {
-		t.Error("Expected state RED got,", smi.State())
-	}
+	smi.Event(TICK)
+	require.Equal(t, stateRed, smi.State().Name())
 
-	smi.Event(LOOP, nil)
-	smi.Event(LOOP, nil)
-	if smi.State() != states.red {
-		t.Error("Expected state RED got,", smi.State())
-	}
-	if counters.RedEnterCount != 1 {
-		t.Error("Expected RED OnEnter count of 1, got", counters.RedEnterCount)
-	}
-	if counters.RedEventCount != 3 {
-		t.Error("Expected RED OnEvent count of 3, got", counters.RedEventCount)
-	}
-	if counters.RedExitCount != 0 {
-		t.Error("Expected RED OnExit count of 0, got", counters.RedExitCount)
-	}
+	smi.Event(LOOP)
+	smi.Event(LOOP)
+	require.Equal(t, stateRed, smi.State().Name())
+	require.Equal(t, 1, tracker.OnEnters(states.red))
+	require.Equal(t, 3, tracker.OnEvents(states.red))
+	require.Equal(t, 0, tracker.OnExits(states.red))
 
-	smi.Event(TICK, nil)
-	if smi.State() != states.green {
-		t.Error("Expected state GREEN got,", smi.State())
-	}
+	smi.Event(TICK)
+	require.Equal(t, stateGreen, smi.State().Name())
 
-	if counters.RedExitCount != 1 {
-		t.Error("Expected RED OnExit count of 1, got", counters.RedExitCount)
-	}
+	require.Equal(t, 1, tracker.OnExits(states.red))
 }
 
 func TestDefaultTransition(t *testing.T) {
-	sm, states, _ := createFSM()
+	sm, _, _ := createFSM()
 
-	sm.Event(TICK, nil)
-	if sm.State() != states.yellow {
-		t.Error("Expected state YELLOW got,", sm.State())
-	}
+	sm.Event(TICK)
+	require.Equal(t, stateYellow, sm.State().Name())
 
-	sm.Event("UNKNOWN", nil)
-	if sm.State() != states.exit {
-		t.Error("Expected state EXIT got,", sm.State())
-	}
+	sm.Event("UNKNOWN")
+	require.Equal(t, stateExit, sm.State().Name())
 }
 
 func Example() {

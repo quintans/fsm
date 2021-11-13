@@ -182,31 +182,50 @@ type StateMachineInstance struct {
 
 // setState transitions the state machine to the specified state
 // calling the appropriate event handlers
-func (m *StateMachineInstance) setState(state *State, event *Event) *Event {
-	diffState := state != m.currentState
+func (m *StateMachineInstance) setState(nextState *State, event *Event) *Event {
+	diffState := nextState != m.currentState
 	exitHandler := m.currentState.onExit
 	if diffState && m.currentState != nil && exitHandler != nil {
 		exitHandler(event)
 	}
 
-	var nextEvent *Event
-	if state.onEvent != nil {
-		nextEvent = state.onEvent(event)
+	if diffState && nextState.onEnter != nil {
+		nextState.onEnter(event)
 	}
-	if diffState && state.onEnter != nil {
-		state.onEnter(event)
+
+	var nextEvent *Event
+	if nextState.onEvent != nil {
+		nextEvent = nextState.onEvent(event)
 	}
 
 	if event != nil {
 		m.fireChangeEvent(event)
 	}
-	m.currentState = state
+	m.currentState = nextState
 	return nextEvent
+}
+
+type EventOption func(*Event)
+
+func WithData(data interface{}) EventOption {
+	return func(e *Event) {
+		e.data = data
+	}
 }
 
 // Event is called to submit an event to the FSM
 // triggering the appropriate state transition, if any is registered for the event.
-func (m *StateMachineInstance) Event(key interface{}, data interface{}) (endState *State, state *State, err error) {
+func (m *StateMachineInstance) Event(key interface{}, options ...EventOption) (endState *State, state *State, err error) {
+	event := &Event{key: key, from: m.currentState}
+	for _, option := range options {
+		option(event)
+	}
+
+	return m.event(event)
+}
+
+func (m *StateMachineInstance) event(event *Event) (endState *State, state *State, err error) {
+	key := event.key
 	state = m.currentState
 	endState = state.transitions[key]
 	if endState == nil {
@@ -216,11 +235,11 @@ func (m *StateMachineInstance) Event(key interface{}, data interface{}) (endStat
 	if endState == nil {
 		return nil, nil, &ErrTransitionNotFound{state: state.name, key: key}
 	}
-	event := &Event{key, data, state}
+
 	nextEvent := m.setState(endState, event)
 	m.fireChangeEvent(event)
 	if nextEvent != nil {
-		endState, state, err = m.Event(nextEvent.Key(), nextEvent.Data())
+		return m.event(nextEvent)
 	}
 
 	return endState, state, err
@@ -231,15 +250,17 @@ func (m *StateMachineInstance) State() *State {
 	return m.currentState
 }
 
+type OnHandler func(*Event)
+
 // OnEnter option
-func OnEnter(fn func(*Event)) func(*State) {
+func OnEnter(fn OnHandler) func(*State) {
 	return func(s *State) {
 		s.onEnter = fn
 	}
 }
 
 // OnExit option
-func OnExit(fn func(*Event)) func(*State) {
+func OnExit(fn OnHandler) func(*State) {
 	return func(s *State) {
 		s.onExit = fn
 	}
@@ -257,15 +278,17 @@ type State struct {
 	name        string
 	transitions map[interface{}]*State
 	// onEnter is called when entering a state
-	// when there is a transition A -> B where A != B
-	onEnter func(*Event)
-	// onExit is called when exiting a state
-	// when there is a transition A -> B where A != B
-	onExit func(*Event)
+	// when there is a transition A -> B where A != B.
+	// This handler is called before the OnEvent
+	onEnter OnHandler
 	// onEvent is called when a event occurs, even if
 	// the transition A -> B where A == B.
 	// An event can be returned in the case of a transitional state.
+	// This handler is called after the OnEnter
 	onEvent func(*Event) *Event
+	// onExit is called when exiting a state
+	// when there is a transition A -> B where A != B
+	onExit OnHandler
 }
 
 // AddTransition adds a state transition.
