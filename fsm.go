@@ -36,17 +36,20 @@ func (e *ErrTransitionNotFound) State() string {
 
 // StateMachine represents a Finite State Machine (FSM)
 type StateMachine struct {
-	name            string
-	states          map[string]*State
-	changeListeners []OnHandler
+	name                  string
+	states                map[string]*State
+	orderedStates         []*State
+	onTransitionListeners []OnHandler
+	fallbackHandler       func(*Context) *State
+	fallbackState         *State
 }
 
 // NewStateMachine creates a new FSM
 func NewStateMachine(name string) *StateMachine {
 	return &StateMachine{
-		name:            name,
-		states:          map[string]*State{},
-		changeListeners: []OnHandler{},
+		name:                  name,
+		states:                map[string]*State{},
+		onTransitionListeners: []OnHandler{},
 	}
 }
 
@@ -57,8 +60,9 @@ func (s *StateMachine) StateByName(name string) *State {
 
 // FromState sets the current State. No event handlers will be called.
 func (s *StateMachine) FromState(state *State) *StateMachineInstance {
+	smCopy := *s
 	return &StateMachineInstance{
-		StateMachine: s,
+		StateMachine: &smCopy,
 		currentState: state,
 	}
 }
@@ -83,16 +87,14 @@ func (s *StateMachine) String() string {
 	return s.name
 }
 
-// AddChangeListener add a change listener.
-// Is only used to report changes that have already happened. ChangeEvents are
-// only fired AFTER a transition has happened.
-func (s *StateMachine) AddChangeListener(listener OnHandler) {
-	s.changeListeners = append(s.changeListeners, listener)
+// AddOnTransition add a transition listener.
+// Is only used to report transitions that have already happened, fired AFTER a transition has happened.
+func (s *StateMachine) AddOnTransition(listener OnHandler) {
+	s.onTransitionListeners = append(s.onTransitionListeners, listener)
 }
 
-// Fire a change event to registered listeners.
-func (s *StateMachine) fireChangeEvent(ctx *Context) {
-	for _, v := range s.changeListeners {
+func (s *StateMachine) fireOnTransition(ctx *Context) {
+	for _, v := range s.onTransitionListeners {
 		v(ctx)
 	}
 }
@@ -107,6 +109,7 @@ func (s *StateMachine) AddState(name string, opts ...func(*State)) *State {
 		o(state)
 	}
 	s.states[state.name] = state
+	s.orderedStates = append(s.orderedStates, state)
 	return state
 }
 
@@ -130,9 +133,22 @@ func (s *StateMachine) fire(currentState *State, ctx *Context) (*State, error) {
 	state := currentState
 	nextState := state.transitions[key]
 	if nextState == nil {
-		// get the fallback transition
-		nextState = state.transitions[nil]
+		// get the fallback state transition for this state
+		nextState = state.fallbackTransition
 	}
+	if nextState == nil && state.fallbackHandler != nil {
+		// get the dynamic fallback state transition for this state
+		nextState = state.fallbackHandler(ctx)
+	}
+	if nextState == nil {
+		// get the fallback state transition for this machine
+		nextState = s.fallbackState
+	}
+	if nextState == nil && s.fallbackHandler != nil {
+		// get the dynamic fallback state transition for this machine
+		nextState = s.fallbackHandler(ctx)
+	}
+
 	if nextState == nil {
 		return nil, &ErrTransitionNotFound{state: state.name, key: key}
 	}
@@ -166,9 +182,23 @@ func (s *StateMachine) transition(currentState, nextState *State, ctx *Context) 
 		nextCtx = ctx.nextContext()
 	}
 
-	s.fireChangeEvent(ctx)
+	s.fireOnTransition(ctx)
 
 	return nextCtx
+}
+
+// SetFallbackHandler sets the fallback handler when an Event is unhandled by none of the transitions.
+// This will clear fallback state
+func (s *StateMachine) SetFallbackHandler(handler func(*Context) *State) {
+	s.fallbackHandler = handler
+	s.fallbackState = nil
+}
+
+// SetFallbackState sets the fallback state when an Event is unhandled by none of the transitions.
+// This will clear fallback handler
+func (s *StateMachine) SetFallbackState(state *State) {
+	s.fallbackState = state
+	s.fallbackHandler = nil
 }
 
 type StateMachineInstance struct {
@@ -225,8 +255,10 @@ func OnEvent(fn OnHandler) func(*State) {
 
 // State represents a state of the FSM
 type State struct {
-	name        string
-	transitions map[interface{}]*State
+	name               string
+	transitions        map[interface{}]*State
+	fallbackTransition *State
+	fallbackHandler    func(*Context) *State
 	// onEnter is called when entering a state
 	// when there is a transition A -> B where A != B.
 	// This handler is called before the OnEvent
@@ -247,11 +279,20 @@ func (s *State) AddTransition(eventKey interface{}, to *State) *State {
 	return s
 }
 
-// AddTransition adds a fallback state transition.
+// SetFallbackTransition adds a fallback transition.
 // If no transition is identified this one will be used
-func (s *State) AddFallbackTransition(to *State) *State {
-	s.transitions[nil] = to
+// This will clear fallback handler
+func (s *State) SetFallbackTransition(to *State) *State {
+	s.fallbackTransition = to
+	s.fallbackHandler = nil
 	return s
+}
+
+// SetFallbackHandler sets the fallback handler when an Event is unhandled by none of the transitions.
+// This will clear fallback transition
+func (s *State) SetFallbackHandler(handler func(*Context) *State) {
+	s.fallbackHandler = handler
+	s.fallbackTransition = nil
 }
 
 // Name getter for the name

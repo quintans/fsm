@@ -153,7 +153,7 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker) {
 
 	green.AddTransition(TICK, yellow)
 	yellow.AddTransition(TICK, bounce)
-	yellow.AddFallbackTransition(exit)
+	yellow.SetFallbackTransition(exit)
 	bounce.AddTransition(CONTINUE, red)
 
 	red.AddTransition(TICK, green)
@@ -217,19 +217,32 @@ func TestDefaultTransition(t *testing.T) {
 }
 
 func ExampleDot() {
-	smi, _, _ := createFSM()
-	fmt.Println(smi.StateMachine.Dot())
+	smi, states, _ := createFSM()
+	smi.SetFallbackState(states.exit)
+	fmt.Println(smi.Dot())
 	// Output:
 	// digraph finite_state_machine {
 	// 	rankdir=LR;
-	// 	node [shape = doublecircle]; EXIT;
 	// 	node [shape = circle];
+	// 	# nodes
+	// 	GREEN [style=filled, fillcolor=gold];
+	// 	YELLOW;
+	// 	BOUNCE;
+	// 	RED;
+	// 	EXIT [style=filled, shape=doublecircle];
+	// 	# transitions
+	// 	BOUNCE -> EXIT [label="machine fallback", style=dashed];
 	// 	BOUNCE -> RED [label = "CONTINUE"];
+	// 	EXIT -> EXIT [label="machine fallback", style=dashed];
+	// 	GREEN -> EXIT [label="machine fallback", style=dashed];
 	// 	GREEN -> YELLOW [label = "TICK"];
+	// 	RED -> EXIT [label="machine fallback", style=dashed];
 	// 	RED -> GREEN [label = "TICK"];
 	// 	RED -> RED [label = "LOOP"];
 	// 	YELLOW -> BOUNCE [label = "TICK"];
-	// 	YELLOW -> EXIT [label = "fallback"];
+	// 	YELLOW -> EXIT [label="machine fallback", style=dashed];
+	// 	YELLOW -> EXIT [label="state fallback", style=dashed];
+	// 	# title
 	// 	labelloc="t";
 	// 	label="SimpleTransition";
 	// }
@@ -237,13 +250,19 @@ func ExampleDot() {
 
 func ExampleListener() {
 	smi, _, _ := createFSM()
-	smi.AddChangeListener(func(c *fsm.Context) {
+	smi.AddOnTransition(func(c *fsm.Context) {
 		fmt.Printf("%s --%s--> %s\n", c.FromState(), c.Key(), c.ToState())
+	})
+	fallback := smi.AddState("FALLBACK")
+	smi.SetFallbackHandler(func(c *fsm.Context) *fsm.State {
+		return fallback
 	})
 	smi.Fire(TICK)
 	smi.Fire(TICK)
+	smi.Fire("UNMAPPED_EVENT")
 	// Output:
 	// GREEN --TICK--> YELLOW
 	// YELLOW --TICK--> BOUNCE
 	// BOUNCE --CONTINUE--> RED
+	// RED --UNMAPPED_EVENT--> FALLBACK
 }

@@ -4,50 +4,69 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
-	"strings"
 )
 
-func (m *StateMachine) Dot() string {
+type node struct {
+	name string
+	edge bool
+}
+
+func (m *StateMachine) Dot(currentState *State) string {
 	var buf bytes.Buffer
 	buf.WriteString("digraph finite_state_machine {\n\trankdir=LR;")
 
-	edges := m.edges()
-	if len(edges) != 0 {
-		buf.WriteString("\n\tnode [shape = doublecircle]; ")
-		buf.WriteString(strings.Join(edges, ", "))
-		buf.WriteString(";")
+	buf.WriteString("\n\tnode [shape = circle];\n")
+
+	buf.WriteString("\t# nodes\n")
+	for _, n := range m.nodes() {
+		active := n.name == currentState.name
+		buf.WriteString("\t")
+		buf.WriteString(n.name)
+		if active || n.edge {
+			buf.WriteString(" [style=filled")
+			if active {
+				buf.WriteString(", fillcolor=gold")
+			} else {
+				buf.WriteString(", shape=doublecircle")
+			}
+			buf.WriteString("]")
+		}
+		buf.WriteString(";\n")
 	}
-	buf.WriteString("\n\tnode [shape = circle];")
-	buf.WriteString("\n")
+
+	buf.WriteString("\t# transitions\n")
 	var transitions []string
 	for _, s := range m.states {
 		for k, v := range s.transitions {
-			if k == nil {
-				k = "fallback"
-			}
-			transitions = append(transitions, fmt.Sprintf("\t%s -> %s [label = \"%+v\"];", s.name, v.name, k))
+			transitions = append(transitions, fmt.Sprintf("\t%s -> %s [label = \"%+v\"];\n", s.name, v.name, k))
+		}
+		if s.fallbackTransition != nil {
+			transitions = append(transitions, fmt.Sprintf("\t%s -> %s [label=\"state fallback\", style=dashed];\n", s.name, s.fallbackTransition.name))
+		}
+		if m.fallbackState != nil {
+			transitions = append(transitions, fmt.Sprintf("\t%s -> %s [label=\"machine fallback\", style=dashed];\n", s.name, m.fallbackState.name))
 		}
 	}
 	sort.Strings(transitions)
 	for _, t := range transitions {
 		buf.WriteString(t)
-		buf.WriteString("\n")
 	}
-	buf.WriteString(fmt.Sprintf("\tlabelloc=\"t\";\n\tlabel=\"%s\";\n", m.name))
+
+	buf.WriteString("\t# title")
+	buf.WriteString(fmt.Sprintf("\n\tlabelloc=\"t\";\n\tlabel=\"%s\";\n", m.name))
 	buf.WriteString("}")
 	return buf.String()
 }
 
-// edges returns a list of nodes that don't outgoing or ingoing transitions
-func (m *StateMachine) edges() []string {
-	var statesNames []string
-	for _, state := range m.states {
-		if isEnd(state) || m.isStart(state) {
-			statesNames = append(statesNames, state.name)
-		}
+func (m *StateMachine) nodes() []node {
+	var nodes []node
+	for _, state := range m.orderedStates {
+		nodes = append(nodes, node{
+			name: state.name,
+			edge: isEnd(state) || m.isStart(state),
+		})
 	}
-	sort.Strings(statesNames)
-	return statesNames
+	return nodes
 }
 
 func isEnd(state *State) bool {
@@ -68,4 +87,8 @@ func (m *StateMachine) isStart(state *State) bool {
 		}
 	}
 	return true
+}
+
+func (m *StateMachineInstance) Dot() string {
+	return m.StateMachine.Dot(m.currentState)
 }
