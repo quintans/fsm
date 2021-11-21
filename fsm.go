@@ -275,12 +275,8 @@ type State struct {
 
 // AddTransition adds a state transition.
 func (s *State) AddTransition(eventKey interface{}, to *State) *State {
-	s.transitions = append(s.transitions, &transition{
-		name:  fmt.Sprintf("%+v", eventKey),
-		state: to,
-		condition: func(c *Context) bool {
-			return c.eventKey == eventKey
-		},
+	s.AddConditionalTransition(fmt.Sprintf("%+v", eventKey), to, func(c *Context) bool {
+		return c.eventKey == eventKey
 	})
 	return s
 }
