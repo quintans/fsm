@@ -26,7 +26,8 @@ func (m *StateMachine) Dot(currentState *State) string {
 			buf.WriteString(" [style=filled")
 			if active {
 				buf.WriteString(", fillcolor=gold")
-			} else {
+			}
+			if n.edge {
 				buf.WriteString(", shape=doublecircle")
 			}
 			buf.WriteString("]")
@@ -37,14 +38,8 @@ func (m *StateMachine) Dot(currentState *State) string {
 	buf.WriteString("\t# transitions\n")
 	var transitions []string
 	for _, s := range m.states {
-		for k, v := range s.transitions {
-			transitions = append(transitions, fmt.Sprintf("\t%s -> %s [label = \"%+v\"];\n", s.name, v.name, k))
-		}
-		if s.fallbackTransition != nil {
-			transitions = append(transitions, fmt.Sprintf("\t%s -> %s [label=\"state fallback\", style=dashed];\n", s.name, s.fallbackTransition.name))
-		}
-		if m.fallbackState != nil {
-			transitions = append(transitions, fmt.Sprintf("\t%s -> %s [label=\"machine fallback\", style=dashed];\n", s.name, m.fallbackState.name))
+		for _, t := range s.transitions {
+			transitions = append(transitions, fmt.Sprintf("\t%s -> %s [label = \"%+v\"];\n", s.name, t.state.name, t.name))
 		}
 	}
 	sort.Strings(transitions)
@@ -60,7 +55,7 @@ func (m *StateMachine) Dot(currentState *State) string {
 
 func (m *StateMachine) nodes() []node {
 	var nodes []node
-	for _, state := range m.orderedStates {
+	for _, state := range m.states {
 		nodes = append(nodes, node{
 			name: state.name,
 			edge: isEnd(state) || m.isStart(state),
@@ -81,7 +76,7 @@ func (m *StateMachine) isStart(state *State) bool {
 		}
 
 		for _, t := range s.transitions {
-			if t.name == state.name {
+			if t.state.name == state.name {
 				return false
 			}
 		}

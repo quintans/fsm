@@ -79,12 +79,12 @@ func (c *Tracker) Events() []EventInfo {
 	return c.events
 }
 
-func createFSM() (*fsm.StateMachineInstance, *States, *Tracker) {
+func createFSM() (*fsm.StateMachineInstance, *States, *Tracker, error) {
 	// Sate machine
 	sm := fsm.NewStateMachine("SimpleTransition")
 	tracker := &Tracker{}
 	// states
-	green := sm.AddState(stateGreen,
+	green, err := sm.AddState(stateGreen,
 		fsm.OnEnter(func(c *fsm.Context) {
 			tracker.Add(stateGreen, Enter)
 		}),
@@ -95,7 +95,10 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker) {
 			tracker.Add(stateGreen, Event)
 		}),
 	)
-	yellow := sm.AddState(stateYellow,
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	yellow, err := sm.AddState(stateYellow,
 		fsm.OnEnter(func(c *fsm.Context) {
 			tracker.Add(stateYellow, Enter)
 		}),
@@ -106,7 +109,10 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker) {
 			tracker.Add(stateYellow, Event)
 		}),
 	)
-	bounce := sm.AddState(stateBounce,
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	bounce, err := sm.AddState(stateBounce,
 		fsm.OnEnter(func(c *fsm.Context) {
 			tracker.Add(stateBounce, Enter)
 		}),
@@ -118,6 +124,9 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker) {
 			c.Fire(CONTINUE)
 		}),
 	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	// TRANSITIONS
 	// -----------
 	// [green]
@@ -128,7 +137,7 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker) {
 	// | <-CONTINUE-
 	// [red] <-LOOP->
 
-	red := sm.AddState(stateRed,
+	red, err := sm.AddState(stateRed,
 		fsm.OnEnter(func(c *fsm.Context) {
 			tracker.Add(stateRed, Enter)
 		}),
@@ -139,7 +148,10 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker) {
 			tracker.Add(stateRed, Event)
 		}),
 	)
-	exit := sm.AddState(stateExit,
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	exit, err := sm.AddState(stateExit,
 		fsm.OnEnter(func(c *fsm.Context) {
 			tracker.Add(stateExit, Enter)
 		}),
@@ -150,10 +162,13 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker) {
 			tracker.Add(stateExit, Event)
 		}),
 	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 
 	green.AddTransition(TICK, yellow)
 	yellow.AddTransition(TICK, bounce)
-	yellow.SetFallbackTransition(exit)
+	yellow.AddFallbackTransition(exit)
 	bounce.AddTransition(CONTINUE, red)
 
 	red.AddTransition(TICK, green)
@@ -167,11 +182,13 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker) {
 		red:    red,
 		bounce: bounce,
 		exit:   exit,
-	}, tracker
+	}, tracker, nil
 }
 
 func TestOnHandlersOrder(t *testing.T) {
-	smi, _, tracker := createFSM()
+	smi, _, tracker, err := createFSM()
+	require.NoError(t, err)
+
 	smi.Fire(TICK)
 
 	require.Equal(t,
@@ -185,7 +202,8 @@ func TestOnHandlersOrder(t *testing.T) {
 }
 
 func TestSimpleTransition(t *testing.T) {
-	smi, states, tracker := createFSM()
+	smi, states, tracker, err := createFSM()
+	require.NoError(t, err)
 
 	smi.Fire(TICK)
 	require.Equal(t, stateYellow, smi.State().Name())
@@ -207,7 +225,8 @@ func TestSimpleTransition(t *testing.T) {
 }
 
 func TestDefaultTransition(t *testing.T) {
-	sm, _, _ := createFSM()
+	sm, _, _, err := createFSM()
+	require.NoError(t, err)
 
 	sm.Fire(TICK)
 	require.Equal(t, stateYellow, sm.State().Name())
@@ -217,8 +236,11 @@ func TestDefaultTransition(t *testing.T) {
 }
 
 func ExampleDot() {
-	smi, states, _ := createFSM()
-	smi.SetFallbackState(states.exit)
+	smi, _, _, err := createFSM()
+	if err != nil {
+		panic(err)
+	}
+
 	fmt.Println(smi.Dot())
 	// Output:
 	// digraph finite_state_machine {
@@ -231,17 +253,12 @@ func ExampleDot() {
 	// 	RED;
 	// 	EXIT [style=filled, shape=doublecircle];
 	// 	# transitions
-	// 	BOUNCE -> EXIT [label="machine fallback", style=dashed];
 	// 	BOUNCE -> RED [label = "CONTINUE"];
-	// 	EXIT -> EXIT [label="machine fallback", style=dashed];
-	// 	GREEN -> EXIT [label="machine fallback", style=dashed];
 	// 	GREEN -> YELLOW [label = "TICK"];
-	// 	RED -> EXIT [label="machine fallback", style=dashed];
 	// 	RED -> GREEN [label = "TICK"];
 	// 	RED -> RED [label = "LOOP"];
 	// 	YELLOW -> BOUNCE [label = "TICK"];
-	// 	YELLOW -> EXIT [label="machine fallback", style=dashed];
-	// 	YELLOW -> EXIT [label="state fallback", style=dashed];
+	// 	YELLOW -> EXIT [label = "fallback"];
 	// 	# title
 	// 	labelloc="t";
 	// 	label="SimpleTransition";
@@ -249,11 +266,19 @@ func ExampleDot() {
 }
 
 func ExampleListener() {
-	smi, _, _ := createFSM()
+	smi, _, _, err := createFSM()
+	if err != nil {
+		panic(err)
+	}
+
 	smi.AddOnTransition(func(c *fsm.Context) {
 		fmt.Printf("%s --%s--> %s\n", c.FromState(), c.Key(), c.ToState())
 	})
-	fallback := smi.AddState("FALLBACK")
+	fallback, err := smi.AddState("FALLBACK")
+	if err != nil {
+		panic(err)
+	}
+
 	smi.SetFallbackHandler(func(c *fsm.Context) *fsm.State {
 		return fallback
 	})

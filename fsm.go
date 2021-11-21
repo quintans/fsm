@@ -5,6 +5,18 @@ import (
 	"fmt"
 )
 
+type ErrStateAlreadyExists struct {
+	state string
+}
+
+func (e *ErrStateAlreadyExists) Error() string {
+	return fmt.Sprintf("state already exists: %s", e.state)
+}
+
+func (e *ErrStateAlreadyExists) State() string {
+	return e.state
+}
+
 type ErrStateNotFound struct {
 	state string
 }
@@ -37,25 +49,27 @@ func (e *ErrTransitionNotFound) State() string {
 // StateMachine represents a Finite State Machine (FSM)
 type StateMachine struct {
 	name                  string
-	states                map[string]*State
-	orderedStates         []*State
+	states                []*State
 	onTransitionListeners []OnHandler
 	fallbackHandler       func(*Context) *State
-	fallbackState         *State
 }
 
 // NewStateMachine creates a new FSM
 func NewStateMachine(name string) *StateMachine {
 	return &StateMachine{
 		name:                  name,
-		states:                map[string]*State{},
 		onTransitionListeners: []OnHandler{},
 	}
 }
 
 // StateByName gets a registered state with the specified name
 func (s *StateMachine) StateByName(name string) *State {
-	return s.states[name]
+	for _, s := range s.states {
+		if s.name == name {
+			return s
+		}
+	}
+	return nil
 }
 
 // FromState sets the current State. No event handlers will be called.
@@ -70,8 +84,8 @@ func (s *StateMachine) FromState(state *State) *StateMachineInstance {
 // FromStateName sets the current State using the name of the state.
 // No event handlers will be called.
 func (s *StateMachine) FromStateName(name string) (*StateMachineInstance, error) {
-	state, ok := s.states[name]
-	if !ok {
+	state := s.StateByName(name)
+	if state == nil {
 		return nil, &ErrStateNotFound{state: name}
 	}
 	return s.FromState(state), nil
@@ -100,17 +114,20 @@ func (s *StateMachine) fireOnTransition(ctx *Context) {
 }
 
 // AddState creates ans adds state to the StateMachine.
-func (s *StateMachine) AddState(name string, opts ...func(*State)) *State {
-	state := &State{
-		name:        name,
-		transitions: map[interface{}]*State{},
+func (s *StateMachine) AddState(name string, opts ...func(*State)) (*State, error) {
+	state := s.StateByName(name)
+	if state != nil {
+		return nil, &ErrStateAlreadyExists{state: name}
+	}
+
+	state = &State{
+		name: name,
 	}
 	for _, o := range opts {
 		o(state)
 	}
-	s.states[state.name] = state
-	s.orderedStates = append(s.orderedStates, state)
-	return state
+	s.states = append(s.states, state)
+	return state, nil
 }
 
 // Fire is called to submit an event to the FSM
@@ -131,18 +148,12 @@ func (s *StateMachine) Fire(currentState *State, key interface{}, options ...Eve
 func (s *StateMachine) fire(currentState *State, ctx *Context) (*State, error) {
 	key := ctx.eventKey
 	state := currentState
-	nextState := state.transitions[key]
-	if nextState == nil {
-		// get the fallback state transition for this state
-		nextState = state.fallbackTransition
-	}
-	if nextState == nil && state.fallbackHandler != nil {
-		// get the dynamic fallback state transition for this state
-		nextState = state.fallbackHandler(ctx)
-	}
-	if nextState == nil {
-		// get the fallback state transition for this machine
-		nextState = s.fallbackState
+	var nextState *State
+	for _, t := range state.transitions {
+		if t.condition(ctx) {
+			nextState = t.state
+			break
+		}
 	}
 	if nextState == nil && s.fallbackHandler != nil {
 		// get the dynamic fallback state transition for this machine
@@ -187,18 +198,9 @@ func (s *StateMachine) transition(currentState, nextState *State, ctx *Context) 
 	return nextCtx
 }
 
-// SetFallbackHandler sets the fallback handler when an Event is unhandled by none of the transitions.
-// This will clear fallback state
+// SetFallbackHandler sets the fallback handler when an Event is not handled by any of the transitions of the current state.
 func (s *StateMachine) SetFallbackHandler(handler func(*Context) *State) {
 	s.fallbackHandler = handler
-	s.fallbackState = nil
-}
-
-// SetFallbackState sets the fallback state when an Event is unhandled by none of the transitions.
-// This will clear fallback handler
-func (s *StateMachine) SetFallbackState(state *State) {
-	s.fallbackState = state
-	s.fallbackHandler = nil
 }
 
 type StateMachineInstance struct {
@@ -255,10 +257,8 @@ func OnEvent(fn OnHandler) func(*State) {
 
 // State represents a state of the FSM
 type State struct {
-	name               string
-	transitions        map[interface{}]*State
-	fallbackTransition *State
-	fallbackHandler    func(*Context) *State
+	name        string
+	transitions []*transition
 	// onEnter is called when entering a state
 	// when there is a transition A -> B where A != B.
 	// This handler is called before the OnEvent
@@ -275,24 +275,33 @@ type State struct {
 
 // AddTransition adds a state transition.
 func (s *State) AddTransition(eventKey interface{}, to *State) *State {
-	s.transitions[eventKey] = to
+	s.transitions = append(s.transitions, &transition{
+		name:  fmt.Sprintf("%+v", eventKey),
+		state: to,
+		condition: func(c *Context) bool {
+			return c.eventKey == eventKey
+		},
+	})
 	return s
 }
 
-// SetFallbackTransition adds a fallback transition.
+// AddFallbackTransition adds a fallback transition.
 // If no transition is identified this one will be used
-// This will clear fallback handler
-func (s *State) SetFallbackTransition(to *State) *State {
-	s.fallbackTransition = to
-	s.fallbackHandler = nil
+func (s *State) AddFallbackTransition(to *State) *State {
+	s.AddConditionalTransition("fallback", to, func(c *Context) bool {
+		return true
+	})
 	return s
 }
 
-// SetFallbackHandler sets the fallback handler when an Event is unhandled by none of the transitions.
-// This will clear fallback transition
-func (s *State) SetFallbackHandler(handler func(*Context) *State) {
-	s.fallbackHandler = handler
-	s.fallbackTransition = nil
+// AddConditionalTransition adds a state transition that will only occur if the condition function return true
+func (s *State) AddConditionalTransition(name string, to *State, condition func(c *Context) bool) *State {
+	s.transitions = append(s.transitions, &transition{
+		name:      name,
+		state:     to,
+		condition: condition,
+	})
+	return s
 }
 
 // Name getter for the name
@@ -303,6 +312,12 @@ func (s *State) Name() string {
 // String string representation
 func (s *State) String() string {
 	return s.name
+}
+
+type transition struct {
+	name      string
+	state     *State
+	condition func(*Context) bool
 }
 
 // Context represents the event of the state machine
