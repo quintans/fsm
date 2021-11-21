@@ -12,12 +12,12 @@ const TICK = "TICK"
 sm := fsm.NewStateMachine("SimpleTransition")
 
 // states
-green := sm.AddState("GREEN",
+green, _ := sm.AddState("GREEN",
     fsm.OnExit(func(e *fsm.Context) {
         fmt.Println("Exiting GREEN")
     }),
 )
-yellow := sm.AddState("YELLOW",
+yellow, _ := sm.AddState("YELLOW",
     fsm.OnEnter(func(e *fsm.Context) {
         fmt.Println("Entering YELLOW")
     }),
@@ -28,6 +28,12 @@ yellow := sm.AddState("YELLOW",
 
 // state transition: YELLOW --TICK--> GREEN
 green.AddTransition(TICK, yellow)
+
+// We can use conditional transitions,
+// so the above transition could be achieved with the following:
+// s.AddConditionalTransition(TICK, to, func(c *Context) bool {
+//     return c.eventKey == TICK
+// })
 
 // retrieve a FSM instance positioned in the green state
 m := sm.FromState(green)
