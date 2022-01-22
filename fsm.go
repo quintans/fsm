@@ -5,18 +5,6 @@ import (
 	"fmt"
 )
 
-type ErrStateAlreadyExists struct {
-	state string
-}
-
-func (e *ErrStateAlreadyExists) Error() string {
-	return fmt.Sprintf("state already exists: %s", e.state)
-}
-
-func (e *ErrStateAlreadyExists) State() string {
-	return e.state
-}
-
 type ErrStateNotFound struct {
 	state string
 }
@@ -48,16 +36,14 @@ func (e *ErrTransitionNotFound) State() string {
 
 // StateMachine represents a Finite State Machine (FSM)
 type StateMachine struct {
-	name                  string
 	states                []*State
 	onTransitionListeners []OnHandler
 	fallbackHandler       func(*Context) *State
 }
 
-// NewStateMachine creates a new FSM
-func NewStateMachine(name string) *StateMachine {
+// New creates a new FSM
+func New() *StateMachine {
 	return &StateMachine{
-		name:                  name,
 		onTransitionListeners: []OnHandler{},
 	}
 }
@@ -91,16 +77,6 @@ func (s *StateMachine) FromStateName(name string) (*StateMachineInstance, error)
 	return s.FromState(state), nil
 }
 
-// Name getter for the name
-func (s *StateMachine) Name() string {
-	return s.name
-}
-
-// String returns the string representation
-func (s *StateMachine) String() string {
-	return s.name
-}
-
 // AddOnTransition add a transition listener.
 // Is only used to report transitions that have already happened, fired AFTER a transition has happened.
 func (s *StateMachine) AddOnTransition(listener OnHandler) {
@@ -113,21 +89,28 @@ func (s *StateMachine) fireOnTransition(ctx *Context) {
 	}
 }
 
-// AddState creates ans adds state to the StateMachine.
-func (s *StateMachine) AddState(name string, opts ...func(*State)) (*State, error) {
-	state := s.StateByName(name)
-	if state != nil {
-		return nil, &ErrStateAlreadyExists{state: name}
-	}
-
-	state = &State{
+// AddState adds or overrides a state to the StateMachine.
+func (s *StateMachine) AddState(name string, opts ...func(*State)) *State {
+	state := &State{
 		name: name,
 	}
 	for _, o := range opts {
 		o(state)
 	}
-	s.states = append(s.states, state)
-	return state, nil
+
+	idx := -1
+	for k, s := range s.states {
+		if s.name == name {
+			idx = k
+			break
+		}
+	}
+	if idx != -1 {
+		s.states[idx] = state
+	} else {
+		s.states = append(s.states, state)
+	}
+	return state
 }
 
 // Fire is called to submit an event to the FSM

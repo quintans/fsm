@@ -48,7 +48,7 @@ func (m *StateMachine) Dot(currentState *State) string {
 	}
 
 	buf.WriteString("\t# title")
-	buf.WriteString(fmt.Sprintf("\n\tlabelloc=\"t\";\n\tlabel=\"%s\";\n", m.name))
+	buf.WriteString(fmt.Sprintf("\n\tlabelloc=\"t\";\n"))
 	buf.WriteString("}")
 	return buf.String()
 }

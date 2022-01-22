@@ -46,28 +46,28 @@ type Tracker struct {
 	events []EventInfo
 }
 
-func (c *Tracker) Add(stateName string, eventType EventType) {
-	c.events = append(c.events, EventInfo{
+func (t *Tracker) Add(stateName string, eventType EventType) {
+	t.events = append(t.events, EventInfo{
 		stateName: stateName,
 		eventType: eventType,
 	})
 }
 
-func (c *Tracker) OnExits(state *fsm.State) int {
-	return c.count(state, Exit)
+func (t *Tracker) OnExits(state *fsm.State) int {
+	return t.count(state, Exit)
 }
 
-func (c *Tracker) OnEnters(state *fsm.State) int {
-	return c.count(state, Enter)
+func (t *Tracker) OnEnters(state *fsm.State) int {
+	return t.count(state, Enter)
 }
 
-func (c *Tracker) OnEvents(state *fsm.State) int {
-	return c.count(state, Event)
+func (t *Tracker) OnEvents(state *fsm.State) int {
+	return t.count(state, Event)
 }
 
-func (c *Tracker) count(state *fsm.State, eventType EventType) int {
+func (t *Tracker) count(state *fsm.State, eventType EventType) int {
 	cnt := 0
-	for _, v := range c.events {
+	for _, v := range t.events {
 		if v.eventType == eventType && v.stateName == state.Name() {
 			cnt++
 		}
@@ -75,16 +75,16 @@ func (c *Tracker) count(state *fsm.State, eventType EventType) int {
 	return cnt
 }
 
-func (c *Tracker) Events() []EventInfo {
-	return c.events
+func (t *Tracker) Events() []EventInfo {
+	return t.events
 }
 
 func createFSM() (*fsm.StateMachineInstance, *States, *Tracker, error) {
 	// Sate machine
-	sm := fsm.NewStateMachine("SimpleTransition")
+	sm := fsm.New()
 	tracker := &Tracker{}
 	// states
-	green, err := sm.AddState(stateGreen,
+	green := sm.AddState(stateGreen,
 		fsm.OnEnter(func(c *fsm.Context) {
 			tracker.Add(stateGreen, Enter)
 		}),
@@ -95,10 +95,7 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker, error) {
 			tracker.Add(stateGreen, Event)
 		}),
 	)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	yellow, err := sm.AddState(stateYellow,
+	yellow := sm.AddState(stateYellow,
 		fsm.OnEnter(func(c *fsm.Context) {
 			tracker.Add(stateYellow, Enter)
 		}),
@@ -109,10 +106,7 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker, error) {
 			tracker.Add(stateYellow, Event)
 		}),
 	)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	bounce, err := sm.AddState(stateBounce,
+	bounce := sm.AddState(stateBounce,
 		fsm.OnEnter(func(c *fsm.Context) {
 			tracker.Add(stateBounce, Enter)
 		}),
@@ -124,9 +118,6 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker, error) {
 			c.Fire(CONTINUE)
 		}),
 	)
-	if err != nil {
-		return nil, nil, nil, err
-	}
 	// TRANSITIONS
 	// -----------
 	// [green]
@@ -137,7 +128,7 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker, error) {
 	// | <-CONTINUE-
 	// [red] <-LOOP->
 
-	red, err := sm.AddState(stateRed,
+	red := sm.AddState(stateRed,
 		fsm.OnEnter(func(c *fsm.Context) {
 			tracker.Add(stateRed, Enter)
 		}),
@@ -148,10 +139,7 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker, error) {
 			tracker.Add(stateRed, Event)
 		}),
 	)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	exit, err := sm.AddState(stateExit,
+	exit := sm.AddState(stateExit,
 		fsm.OnEnter(func(c *fsm.Context) {
 			tracker.Add(stateExit, Enter)
 		}),
@@ -162,9 +150,6 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker, error) {
 			tracker.Add(stateExit, Event)
 		}),
 	)
-	if err != nil {
-		return nil, nil, nil, err
-	}
 
 	green.AddTransition(TICK, yellow)
 	yellow.AddTransition(TICK, bounce)
@@ -261,7 +246,6 @@ func ExampleDot() {
 	// 	YELLOW -> EXIT [label = "fallback"];
 	// 	# title
 	// 	labelloc="t";
-	// 	label="SimpleTransition";
 	// }
 }
 
@@ -274,10 +258,7 @@ func ExampleListener() {
 	smi.AddOnTransition(func(c *fsm.Context) {
 		fmt.Printf("%s --%s--> %s\n", c.FromState(), c.Key(), c.ToState())
 	})
-	fallback, err := smi.AddState("FALLBACK")
-	if err != nil {
-		panic(err)
-	}
+	fallback := smi.AddState("FALLBACK")
 
 	smi.SetFallbackHandler(func(c *fsm.Context) *fsm.State {
 		return fallback
