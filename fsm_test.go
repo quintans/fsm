@@ -85,37 +85,45 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker, error) {
 	tracker := &Tracker{}
 	// states
 	green := sm.AddState(stateGreen,
-		fsm.OnEnter(func(c *fsm.Context) {
+		fsm.OnEnter(func(c *fsm.Context) error {
 			tracker.Add(stateGreen, Enter)
+			return nil
 		}),
-		fsm.OnExit(func(c *fsm.Context) {
+		fsm.OnExit(func(c *fsm.Context) error {
 			tracker.Add(stateGreen, Exit)
+			return nil
 		}),
-		fsm.OnEvent(func(c *fsm.Context) {
+		fsm.OnEvent(func(c *fsm.Context) (fsm.Eventer, error) {
 			tracker.Add(stateGreen, Event)
+			return nil, nil
 		}),
 	)
 	yellow := sm.AddState(stateYellow,
-		fsm.OnEnter(func(c *fsm.Context) {
+		fsm.OnEnter(func(c *fsm.Context) error {
 			tracker.Add(stateYellow, Enter)
+			return nil
 		}),
-		fsm.OnExit(func(c *fsm.Context) {
+		fsm.OnExit(func(c *fsm.Context) error {
 			tracker.Add(stateYellow, Exit)
+			return nil
 		}),
-		fsm.OnEvent(func(c *fsm.Context) {
+		fsm.OnEvent(func(c *fsm.Context) (fsm.Eventer, error) {
 			tracker.Add(stateYellow, Event)
+			return nil, nil
 		}),
 	)
 	bounce := sm.AddState(stateBounce,
-		fsm.OnEnter(func(c *fsm.Context) {
+		fsm.OnEnter(func(c *fsm.Context) error {
 			tracker.Add(stateBounce, Enter)
+			return nil
 		}),
-		fsm.OnExit(func(c *fsm.Context) {
+		fsm.OnExit(func(c *fsm.Context) error {
 			tracker.Add(stateBounce, Exit)
+			return nil
 		}),
-		fsm.OnEvent(func(c *fsm.Context) {
+		fsm.OnEvent(func(c *fsm.Context) (fsm.Eventer, error) {
 			tracker.Add(stateBounce, Event)
-			c.Fire(CONTINUE)
+			return fsm.Wrap(CONTINUE), nil
 		}),
 	)
 	// TRANSITIONS
@@ -129,25 +137,31 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker, error) {
 	// [red] <-LOOP->
 
 	red := sm.AddState(stateRed,
-		fsm.OnEnter(func(c *fsm.Context) {
+		fsm.OnEnter(func(c *fsm.Context) error {
 			tracker.Add(stateRed, Enter)
+			return nil
 		}),
-		fsm.OnExit(func(c *fsm.Context) {
+		fsm.OnExit(func(c *fsm.Context) error {
 			tracker.Add(stateRed, Exit)
+			return nil
 		}),
-		fsm.OnEvent(func(c *fsm.Context) {
+		fsm.OnEvent(func(c *fsm.Context) (fsm.Eventer, error) {
 			tracker.Add(stateRed, Event)
+			return nil, nil
 		}),
 	)
 	exit := sm.AddState(stateExit,
-		fsm.OnEnter(func(c *fsm.Context) {
+		fsm.OnEnter(func(c *fsm.Context) error {
 			tracker.Add(stateExit, Enter)
+			return nil
 		}),
-		fsm.OnExit(func(c *fsm.Context) {
+		fsm.OnExit(func(c *fsm.Context) error {
 			tracker.Add(stateExit, Exit)
+			return nil
 		}),
-		fsm.OnEvent(func(c *fsm.Context) {
+		fsm.OnEvent(func(c *fsm.Context) (fsm.Eventer, error) {
 			tracker.Add(stateExit, Event)
+			return nil, nil
 		}),
 	)
 
@@ -255,8 +269,9 @@ func ExampleListener() {
 		panic(err)
 	}
 
-	smi.AddOnTransition(func(c *fsm.Context) {
+	smi.AddOnTransition(func(c *fsm.Context) error {
 		fmt.Printf("%s --%s--> %s\n", c.FromState(), c.Key(), c.ToState())
+		return nil
 	})
 	fallback := smi.AddState("FALLBACK")
 

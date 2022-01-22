@@ -23,7 +23,7 @@ type ErrTransitionNotFound struct {
 }
 
 func (e *ErrTransitionNotFound) Error() string {
-	return fmt.Sprintf("unable to find transition on state %s for %+v", e.state, e.key)
+	return fmt.Sprintf("unable to find transition on state '%s' for %+v", e.state, e.key)
 }
 
 func (e *ErrTransitionNotFound) Key() interface{} {
@@ -32,6 +32,26 @@ func (e *ErrTransitionNotFound) Key() interface{} {
 
 func (e *ErrTransitionNotFound) State() string {
 	return e.state
+}
+
+type Eventer interface {
+	Kind() interface{}
+}
+
+type Event struct {
+	Data interface{}
+}
+
+func (s *Event) Kind() interface{} {
+	return s.Data
+}
+
+func Wrap(e interface{}) Eventer {
+	evt, ok := e.(Eventer)
+	if ok {
+		return evt
+	}
+	return &Event{Data: e}
 }
 
 // StateMachine represents a Finite State Machine (FSM)
@@ -115,11 +135,8 @@ func (s *StateMachine) AddState(name string, opts ...func(*State)) *State {
 
 // Fire is called to submit an event to the FSM
 // triggering the appropriate state transition, if any is registered for the event.
-func (s *StateMachine) Fire(currentState *State, key interface{}, options ...EventOption) (*State, error) {
-	ctx := &Context{eventKey: key}
-	for _, option := range options {
-		option(ctx)
-	}
+func (s *StateMachine) Fire(currentState *State, key interface{}) (*State, error) {
+	ctx := &Context{event: Wrap(key)}
 
 	next, err := s.fire(currentState, ctx)
 	if err != nil {
@@ -129,7 +146,6 @@ func (s *StateMachine) Fire(currentState *State, key interface{}, options ...Eve
 }
 
 func (s *StateMachine) fire(currentState *State, ctx *Context) (*State, error) {
-	key := ctx.eventKey
 	state := currentState
 	var nextState *State
 	for _, t := range state.transitions {
@@ -144,12 +160,16 @@ func (s *StateMachine) fire(currentState *State, ctx *Context) (*State, error) {
 	}
 
 	if nextState == nil {
-		return nil, &ErrTransitionNotFound{state: state.name, key: key}
+		return nil, &ErrTransitionNotFound{state: state.name, key: ctx.Key()}
 	}
 
-	nextCtx := s.transition(state, nextState, ctx)
-	if nextCtx != nil {
-		return s.fire(nextState, nextCtx)
+	nextEvent, err := s.transition(state, nextState, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if nextEvent != nil {
+		ctx := &Context{event: nextEvent}
+		return s.fire(nextState, ctx)
 	}
 
 	return nextState, nil
@@ -157,28 +177,35 @@ func (s *StateMachine) fire(currentState *State, ctx *Context) (*State, error) {
 
 // transition transitions the state machine to the specified state
 // calling the appropriate event handlers
-func (s *StateMachine) transition(currentState, nextState *State, ctx *Context) *Context {
+func (s *StateMachine) transition(currentState, nextState *State, ctx *Context) (Eventer, error) {
 	ctx = ctx.SetFrom(currentState).SetTo(nextState)
 
 	diffState := nextState != currentState
 	exitHandler := currentState.onExit
 	if diffState && currentState != nil && exitHandler != nil {
-		exitHandler(ctx)
+		if err := exitHandler(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	if diffState && nextState.onEnter != nil {
-		nextState.onEnter(ctx)
+		if err := nextState.onEnter(ctx); err != nil {
+			return nil, err
+		}
 	}
 
-	var nextCtx *Context
+	var nextEvent Eventer
 	if nextState.onEvent != nil {
-		nextState.onEvent(ctx)
-		nextCtx = ctx.nextContext()
+		var err error
+		nextEvent, err = nextState.onEvent(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	s.fireOnTransition(ctx)
 
-	return nextCtx
+	return nextEvent, nil
 }
 
 // SetFallbackHandler sets the fallback handler when an Event is not handled by any of the transitions of the current state.
@@ -191,18 +218,10 @@ type StateMachineInstance struct {
 	currentState *State
 }
 
-type EventOption func(*Context)
-
-func WithData(data interface{}) EventOption {
-	return func(ctx *Context) {
-		ctx.data = data
-	}
-}
-
 // Fire is called to submit an event to the FSM
 // triggering the appropriate state transition, if any is registered for the event.
-func (m *StateMachineInstance) Fire(key interface{}, options ...EventOption) error {
-	cur, err := m.StateMachine.Fire(m.currentState, key, options...)
+func (m *StateMachineInstance) Fire(key interface{}) error {
+	cur, err := m.StateMachine.Fire(m.currentState, key)
 	if err != nil {
 		return err
 	}
@@ -215,7 +234,7 @@ func (m *StateMachineInstance) State() *State {
 	return m.currentState
 }
 
-type OnHandler func(*Context)
+type OnHandler func(*Context) error
 
 // OnEnter option
 func OnEnter(fn OnHandler) func(*State) {
@@ -232,7 +251,7 @@ func OnExit(fn OnHandler) func(*State) {
 }
 
 // OnEvent option
-func OnEvent(fn OnHandler) func(*State) {
+func OnEvent(fn func(*Context) (Eventer, error)) func(*State) {
 	return func(s *State) {
 		s.onEvent = fn
 	}
@@ -250,7 +269,7 @@ type State struct {
 	// the transition A -> B where A == B.
 	// An event can be returned in the case of a transitional state.
 	// This handler is called after the OnEnter
-	onEvent OnHandler
+	onEvent func(*Context) (Eventer, error)
 	// onExit is called when exiting a state
 	// when there is a transition A -> B where A != B
 	onExit OnHandler
@@ -258,8 +277,9 @@ type State struct {
 
 // AddTransition adds a state transition.
 func (s *State) AddTransition(eventKey interface{}, to *State) *State {
-	s.AddConditionalTransition(fmt.Sprintf("%+v", eventKey), to, func(c *Context) bool {
-		return c.eventKey == eventKey
+	key := Wrap(eventKey).Kind()
+	s.AddConditionalTransition(fmt.Sprintf("%+v", key), to, func(c *Context) bool {
+		return c.Key() == key
 	})
 	return s
 }
@@ -301,42 +321,10 @@ type transition struct {
 
 // Context represents the event of the state machine
 type Context struct {
-	context  context.Context
-	eventKey interface{}
-	data     interface{}
-	to       *State
-	from     *State
-	fire     *fireEvent
-}
-
-type fireEvent struct {
-	key     interface{}
-	options []EventOption
-}
-
-// Fire sets a new event to be fired after exiting OnEvent handler.
-// This will copy existing options to the new event allowing to override them
-func (c *Context) Fire(key interface{}, overrideOptions ...EventOption) {
-	var options []EventOption
-	if c.data != nil {
-		options = append(options, WithData(c.data))
-	}
-	if c.context != nil {
-		options = append(options, WithData(c.context))
-	}
-	options = append(options, overrideOptions...)
-	c.fire = &fireEvent{key: key, options: options}
-}
-
-func (c *Context) nextContext() *Context {
-	if c.fire == nil {
-		return nil
-	}
-	ctx := &Context{eventKey: c.fire.key}
-	for _, option := range c.fire.options {
-		option(ctx)
-	}
-	return ctx
+	context context.Context
+	event   Eventer
+	to      *State
+	from    *State
 }
 
 func (c *Context) SetFrom(state *State) *Context {
@@ -353,12 +341,12 @@ func (c *Context) SetTo(state *State) *Context {
 
 // Key gets the key
 func (c *Context) Key() interface{} {
-	return c.eventKey
+	return c.event.Kind()
 }
 
 // Data gets the data
 func (c *Context) Data() interface{} {
-	return c.data
+	return c.event
 }
 
 // FromState gets the state before the transition caused by this event
