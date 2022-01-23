@@ -93,9 +93,9 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker, error) {
 			tracker.Add(stateGreen, Exit)
 			return nil
 		}),
-		fsm.OnEvent(func(c *fsm.Context) (fsm.Eventer, error) {
+		fsm.OnEvent(func(c *fsm.Context) error {
 			tracker.Add(stateGreen, Event)
-			return nil, nil
+			return nil
 		}),
 	)
 	yellow := sm.AddState(stateYellow,
@@ -107,9 +107,9 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker, error) {
 			tracker.Add(stateYellow, Exit)
 			return nil
 		}),
-		fsm.OnEvent(func(c *fsm.Context) (fsm.Eventer, error) {
+		fsm.OnEvent(func(c *fsm.Context) error {
 			tracker.Add(stateYellow, Event)
-			return nil, nil
+			return nil
 		}),
 	)
 	bounce := sm.AddState(stateBounce,
@@ -121,9 +121,9 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker, error) {
 			tracker.Add(stateBounce, Exit)
 			return nil
 		}),
-		fsm.OnEvent(func(c *fsm.Context) (fsm.Eventer, error) {
+		fsm.OnEvent(func(c *fsm.Context) error {
 			tracker.Add(stateBounce, Event)
-			return fsm.Wrap(CONTINUE), nil
+			return c.Fire(CONTINUE)
 		}),
 	)
 	// TRANSITIONS
@@ -145,9 +145,9 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker, error) {
 			tracker.Add(stateRed, Exit)
 			return nil
 		}),
-		fsm.OnEvent(func(c *fsm.Context) (fsm.Eventer, error) {
+		fsm.OnEvent(func(c *fsm.Context) error {
 			tracker.Add(stateRed, Event)
-			return nil, nil
+			return nil
 		}),
 	)
 	exit := sm.AddState(stateExit,
@@ -159,9 +159,9 @@ func createFSM() (*fsm.StateMachineInstance, *States, *Tracker, error) {
 			tracker.Add(stateExit, Exit)
 			return nil
 		}),
-		fsm.OnEvent(func(c *fsm.Context) (fsm.Eventer, error) {
+		fsm.OnEvent(func(c *fsm.Context) error {
 			tracker.Add(stateExit, Event)
-			return nil, nil
+			return nil
 		}),
 	)
 
@@ -283,7 +283,7 @@ func ExampleListener() {
 	smi.Fire("UNMAPPED_EVENT")
 	// Output:
 	// GREEN --TICK--> YELLOW
-	// YELLOW --TICK--> BOUNCE
 	// BOUNCE --CONTINUE--> RED
+	// YELLOW --TICK--> BOUNCE
 	// RED --UNMAPPED_EVENT--> FALLBACK
 }

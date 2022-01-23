@@ -67,7 +67,7 @@ func TestCancelTripFail(t *testing.T) {
 	r.Equal("abc123", trip.bookID)
 	r.Equal(true, trip.cancelled)
 	r.Equal(0, trip.fare)
-	trip.state = "cancelled"
+	trip.state = "booked"
 }
 
 type PayService interface {
@@ -168,14 +168,13 @@ func (t *Trip) Cancel(payService PayService) error {
 	})
 }
 
-func (t *Trip) cancel(c *fsm.Context) (fsm.Eventer, error) {
+func (t *Trip) cancel(c *fsm.Context) error {
 	t.cancelled = true
 	cncl := c.Data().(cancel)
-
-	return pay{
+	return c.Fire(pay{
 		amount:     2,
 		payService: cncl.payService,
-	}, nil
+	})
 }
 
 func (t *Trip) Pay(amount int, payService PayService) error {
